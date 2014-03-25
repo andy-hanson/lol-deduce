@@ -4,7 +4,7 @@
 { rightUnCons, splitWhere, trySplitOnceWhere, tail } = require '../help/list'
 E = require '../Expression'
 T = require './Token'
-{ binaryOperators } = require './language'
+{ assertKeywords, binaryOperators } = require './language'
 Pos = require '../Pos'
 Locals = require './Locals'
 
@@ -22,37 +22,38 @@ class Parser
 		E.AllAutoDeclares.forEach (declare) =>
 			@locals.addNamed declare
 
-
-
 	###
 	A single part of a block.
-	@return [E.BlockElement, null]
+	@return [E.ProofPart, null]
 	###
 	any: (tokens) ->
+		@pos = tokens[0].pos()
+
 		[ beforeBlock, body ] = @maybeTakeLastBlock tokens
 		if body == null
 			if (T.special 'declare') tokens[0]
 				@declare tail tokens
+			else if (T.special 'assert') tokens[0]
+				@assert tail tokens
 			else
 				@line tokens
 		else
 			@rule (rightTail tokens), body
 
-		###
-		if (T.special '⇒') last tokens
-			@rule rightTail tokens
-		#if (T.special 'rule') tokens[0]
-		#	@rule tail tokens
-		else if (T.special 'declare') tokens[0]
-			@declare tail tokens
-		else
-			@line tokens
-			#[ before, body ] = @maybeTakeLastBlock tokens
-			#if body?
-			#	@supposition before, body
-			#else
-			#	@line tokens
-		###
+	assert: (tokens) ->
+		# TODO: assert only 1 token before colon
+		[ beforeColon, _, logicsTokens ] =
+			(trySplitOnceWhere tokens, T.special ':') ?
+			cFail @pos, "Assert must have colon"
+		kind = @nameText beforeColon[0]
+
+		cCheck kind in assertKeywords, @pos, ->
+			keys = "{ #{assertKeywords.join ', '} }"
+			"`assert` must be followed by one of #{keys}, not #{kind}"
+
+		logics = (splitWhere logicsTokens, T.special ',').map (lTokens) =>
+			@logic lTokens
+		new E.Assert @pos, kind, logics
 
 	###
 	An entire block.
@@ -70,8 +71,7 @@ class Parser
 
 	declare: (tokens) ->
 		tokens.forEach (d) =>
-			cCheck d instanceof T.Name, d.pos(), "Expected name, not #{d}"
-			dec = new E.AtomDeclare d.pos(), d.text()
+			dec = new E.AtomDeclare d.pos(), @nameText d
 			@locals.addNamed dec
 
 	###
@@ -161,7 +161,7 @@ class Parser
 					when '('
 						cCheck tokens.length == 1, tok0.pos(), ->
 							"Nothing can follow complex expression #{tok0}"
-						@logic tok0.content()
+						@logic tok0.body()
 					when '→'
 						cFail pos, 'Did not expect indented block'
 			when T.Name
@@ -205,7 +205,7 @@ class Parser
 			[ tokens, null ]
 
 
-	mustBeName: (name) ->
+	nameText: (name) ->
 		cCheck name instanceof T.Name, @pos, ->
 			"Expected name, got #{name}"
 		name.text()
@@ -219,33 +219,37 @@ class Parser
 		rule = @locals.withFrame =>
 			cCheck ((T.special '⇒') last tokens), @pos, 'Rule must end in ⇒'
 
-			#cCheck ((T.special '⇒') last tokens), @pos, 'Rule must end in
-			#pc = trySplitOnceWhere ruleDef, T.special '⇒'
-			#cCheck pc?, rest[0].pos(), 'Rule must have ⇒'
-			#[ preArrow, _, conclusionTokens ] = pc
-
 			preArrow = rightTail tokens
-			[ beforeColon, _, premisesTokens ] =
-				trySplitOnceWhere preArrow, T.special ':'
 
-			name = @mustBeName beforeColon[0]
+			{ name, newAtoms, premisesTokens } =
+				if (split = trySplitOnceWhere preArrow, T.special ':')?
+					[ beforeColon, _, premisesTokens ] = split
 
-			newAtomsTokens = tail beforeColon
+					newAtomsTokens = tail beforeColon
 
-			newAtoms =
-				newAtomsTokens.map (x) =>
-					atomName = @mustBeName x
-					newAtom = new E.AtomDeclare x.pos(), atomName
-					@locals.add atomName, newAtom
-					newAtom
+					name: @nameText beforeColon[0]
+					newAtoms:
+						newAtomsTokens.map (x) =>
+							atomName = @nameText x
+							newAtom = new E.AtomDeclare x.pos(), atomName
+							@locals.add atomName, newAtom
+							newAtom
+					premisesTokens: premisesTokens
+
+				else
+					name: null
+					newAtoms: []
+					premisesTokens: preArrow
+
 
 			premises =
 				(splitWhere premisesTokens, T.special ',').map (toks) =>
 					@logic toks
 
-			for premise, index in premises
-				pName = "#{name}#{index + 1}"
-				@locals.add pName, new E.Line @pos, pName, premise
+			if name?
+				for premise, index in premises
+					premiseName = "#{name}##{index + 1}"
+					@locals.add premiseName, new E.Line @pos, premiseName, premise
 
 			proof =
 				@block proofTokens
@@ -254,25 +258,6 @@ class Parser
 
 		@locals.addNamed rule
 		rule
-
-	###
-	supposition: (tokens, body) ->
-		s = @locals.withFrame =>
-			[ before, arrow ] = rightUnCons tokens
-			@pos = arrow.pos()
-			cCheck ((T.special '=>') arrow), @pos,
-				"Supposition must end in '=>'"
-			[ name, rest ] = @maybeTakeLabel before
-			supposed = @logic rest
-			supposedLine = new E.Line arrow.pos(), name, supposed
-			@locals.maybeAddNamed supposedLine
-			derived = @block body
-			imply = @get new T.Name @pos, 'operator', '->'
-			new E.Supposition @pos, name, supposed, derived, imply
-
-		@locals.maybeAddNamed s
-		s
-	###
 
 
 module.exports = parse = (tokens) ->

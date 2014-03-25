@@ -1,9 +1,28 @@
 { abstract, check, fail, type, typeEach, typeExist } = require './help/✔'
-{ last } = require './help/list'
+{ isEmpty, last, rightTail } = require './help/list'
 { read } = require './help/meta'
 { indented } = require './help/str'
 T = require './compile/Token'
 Pos = require './Pos'
+{ cCheck } = require './c✔'
+
+
+allAtoms = (logic) ->
+	if logic instanceof Array
+		out = []
+		for sub in logic
+			out.push (allAtoms sub)...
+		out
+	else
+		type logic, Logic
+
+		switch logic.constructor
+			when AtomDeclare
+				[ logic ]
+			when AtomReference
+				[ logic.referenced() ]
+			when Fun
+				(allAtoms logic.caller()).concat allAtoms logic.subs()
 
 ###
 Any compiled output.
@@ -87,8 +106,7 @@ class Fun extends Logic
 	@param @_subs [Array<Logic>]
 	###
 	constructor: (@_pos, @_caller, @_subs) ->
-		type @_pos, Pos
-		type @_caller, Logic
+		type @_pos, Pos, @_caller, Logic
 		typeEach @_subs, Logic
 		Object.freeze @
 
@@ -113,15 +131,35 @@ class Fun extends Logic
 
 
 class ProofPart extends Expression
+	maybeToLogic: abstract
+
 	toLogic: ->
-		abstract()
+		x = @maybeToLogic()
+		if x == null
+			cFail "#{@} can not be reified."
+		else
+			x
 
 class Rule extends ProofPart
 	constructor: (@_pos, @_name, @_newAtoms, @_premises, @_proof) ->
 		type @_name, String, @_pos, Pos
 		typeEach @_newAtoms, AtomDeclare, @_premises, Logic, @_proof, ProofPart
+		check not isEmpty @proof()
+		@checkUseEveryAtom()
 
 	read @, 'pos', 'name', 'newAtoms', 'premises', 'proof'
+
+	checkUseEveryAtom: ->
+		used = Set()
+
+		for atom in allAtoms @premises()
+			used.add atom
+		for atom in allAtoms @conclusion()
+			used.add atom
+
+		for atom in @newAtoms()
+			cCheck (used.has atom), @pos(), ->
+				"Rule does not use new atom #{atom}"
 
 	conclusion: ->
 		(last @proof()).toLogic()
@@ -129,13 +167,29 @@ class Rule extends ProofPart
 	arity: ->
 		@premises().length
 
-	toLogic: ->
+	maybeToLogic: ->
 		if @newAtoms().length == 0
-			check @arity() == 1, "',' in supposition is TODO"
-			imp = new AtomReference @pos(), AutoDeclares.Implies
-			new Fun @pos(), imp, [ @premises()[0], @conclusion() ]
+			if @premises().length == 0
+				@conclusion()
+			else
+				#conj = new AtomReference @pos(), AutoDeclares['∧']
+				imp = new AtomReference @pos(), AutoDeclares['→']
+
+				if @premises().length == 1
+					new Fun @pos(), imp, [ @premises()[0], @conclusion() ]
+				else
+					null
+
+					# Produce a generalized conjunction of premises
+					#prems = last @premises()
+					#for p in rightTail @premises()
+					#	prems = new Fun conj, [ p, prems ]
+
+					#new Fun @pos(), imp, [ prems, @conclusion() ]
+
+
 		else
-			fail "Rule to for-all is TODO"
+			null
 
 	toString: ->
 		name = @name()
@@ -154,13 +208,23 @@ class Line extends ProofPart
 	isJustified: ->
 		@justification()?
 
-	toLogic: ->
+	maybeToLogic: ->
 		@logic()
 
 	toString: ->
 		name = if @name()? then "#{@name()}: " else ''
 		just = if @justification()? then " |#{@justification()}" else ''
 		"#{name}#{@logic()}#{just}"
+
+class Assert extends ProofPart
+	constructor: (@_pos, @_kind, @_logics) ->
+		type @_pos, Pos, @_kind, String
+		typeEach @_logics, Logic
+
+	maybeToLogic: ->
+		null
+
+	read @, 'pos', 'kind', 'logics'
 
 class Justification extends Expression
 	constructor: (@_pos, @_justifier, @_arguments) ->
@@ -176,14 +240,13 @@ class Justification extends Expression
 		args = @arguments().map (arg) -> arg.name()
 		"#{@justifier().name()} #{args.join ', '}"
 
-AutoDeclares =
-	Implies: new AtomDeclare Pos.start(), '→'
-	And: new AtomDeclare Pos.start(), '∧'
 
-AllAutoDeclares = [ AutoDeclares.Implies, AutoDeclares.And ]
+AutoDeclares = { }
+AllAutoDeclares = [ ]
 
-implyRef = () ->
-
+for x in [ '→', '∧', '∨', '¬', '=', '⊥', '⊤' ]
+	AllAutoDeclares.push AutoDeclares[x] =
+		new AtomDeclare Pos.start(), x
 
 module.exports =
 	AutoDeclares: AutoDeclares
@@ -200,3 +263,9 @@ module.exports =
 	Rule: Rule
 	Line: Line
 	Justification: Justification
+	Assert: Assert
+
+	negate: (logic) ->
+		type logic, Logic
+		nope = new AtomReference logic.pos(), AutoDeclares['¬']
+		new Fun logic.pos(), nope, [ logic ]

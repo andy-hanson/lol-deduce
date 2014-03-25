@@ -3,9 +3,13 @@
 	[ '=', '↔', '⊕', '→', '∨', '∧' ]
 
 @char =
-	name: /[A-Za-z0-9]/
-	operator: /[∧∨¬→↔⊕⇒\-+<>]/
-	special: /[\,\:\|]/
+	name: /[A-Za-z#0-9'⊥⊤]/
+	# `¬` is a special operator, see lex.coffee
+	operator: /[∧∨←→=⊕\-+<>]/
+	special: /[\,\:\|⇒]/
 
 @keywords =
-	[ 'declare', 'rule', '⇒' ]
+	[ 'assert', 'declare' ]
+
+@assertKeywords =
+	[ 'decided', 'proven' ]

@@ -44,6 +44,8 @@ tokenize = (stream, inside = 0) ->
 					new T.Special pos, ch
 				when match char.name
 					takeName char.name, 'variable'
+				when maybeTake /¬/
+					new T.Name pos, 'operator', '¬'
 				when match char.operator
 					takeName char.operator, 'operator'
 				when maybeTake /[\(]/

@@ -1,6 +1,7 @@
-{ check, fail, type, typeEach } = require '../help/✔'
+{ check, fail, type, typeEach, typeExist } = require '../help/✔'
 { cCheck } = require '../c✔'
 { zipped } = require '../help/list'
+{ read } = require '../help/meta'
 StringMap = require '../help/StringMap'
 E = require '../Expression'
 
@@ -16,22 +17,46 @@ annotateErrors = (mayThrow, annotate) ->
 		error.message = "#{annotate()}: #{error.message}"
 		throw error
 
+class Context
+	constructor: (@_content, @_up) ->
+		typeExist @_content, Array, @_up, Context
+
+	read @, 'content', 'up'
+
+	findMatch: (logic) ->
+		if @content()?
+			for part in @content()
+				x = part.maybeToLogic()
+				if x? and x.equals logic
+					return part
+
+		if @up()?
+			@up().findMatch logic
+		else
+			null
+
+	@Top = new Context null, null
+
+
 ###
 @param proof [Array<ProofPart>]
 @return [Array<Line>]
   If `expression` is valid, returns its premises (unjustified lines).
   Otherwise, throws an error about the first invalid statement.
 ###
-module.exports = checkLogic = (proof) ->
+module.exports = checkLogic = (proof, superProof = Context.Top) ->
 	typeEach proof, E.ProofPart
 
 	premises = []
 
-	proof.forEach (subExpr) ->
+	context = new Context(proof, superProof)
+
+	for subExpr, idx in proof
 		switch subExpr.constructor
 			when E.Rule
 				annotateErrors ->
-					premises.push (checkLogic subExpr.proof())...
+					subPremises = checkLogic subExpr.proof(), context
+					premises.push subPremises...
 				, ->
 					"In rule #{subExpr.name()}"
 
@@ -41,10 +66,35 @@ module.exports = checkLogic = (proof) ->
 				else
 					premises.push subExpr
 
+			when E.Assert
+				assert subExpr, context
+
 			else
 				fail() # ProofPart is Rule or Line.
 
 	premises
+
+
+assert = (assertion, context) ->
+	pos = assertion.pos()
+
+	for logic in assertion.logics()
+		switch assertion.kind()
+			when 'decided'
+				unless (context.findMatch logic)?
+					cCheck (context.findMatch E.negate logic)?, pos, ->
+						"No line decides #{logic}"
+
+			when 'proven'
+				#if (line = context.findLine assertion.logic())?
+				#	console.log "Proved #{assertion.logic()} on line #{line.pos().line()}"
+				#else
+
+				cCheck (context.findMatch logic)?, pos, ->
+					"No line proves #{logic}"
+
+			else
+				fail()
 
 
 ###
@@ -60,23 +110,20 @@ checkJustified = (line) ->
 
 	annotateErrors ->
 		if justifier instanceof E.Line
-			if false#args.length == 0
-				cCheck (justifier.toLogic().equals lineContent), justify.pos(), ->
-					"Attempted to reiterate #{justifier.toLogic()} as #{lineContent}"
-			else
-				cCheck args.length == 1, justify.pos(), ->
-					"Rule takes 1 premise; you gave #{args.length}."
-				implier =
-					args[0]
-				implAtom =
-					new E.AtomReference justify.pos(), E.AutoDeclares.Implies
-				impl =
-					new E.Fun justify.pos(), implAtom, [ implier.toLogic(), lineContent ]
-				patternMatch impl, justifier.logic(), new StringMap
+			cCheck args.length == 1, justify.pos(), ->
+				"Implication takes 1 premise; you gave #{args.length}." +
+					if args.length == 0 then " (Did you want 'repeat'?)" else ''
+			implier =
+				args[0]
+			implAtom =
+				new E.AtomReference justify.pos(), E.AutoDeclares['→']
+			impl =
+				new E.Fun justify.pos(), implAtom, [ implier.toLogic(), lineContent ]
+			patternMatch impl, justifier.logic(), new StringMap
 		else
 			rule = justifier
 			cCheck rule.arity() == justify.arity(), justify.pos(), ->
-				"Rule takes #{rule.arity()} premises; you gave {justify.arity()}."
+				"Rule takes #{rule.arity()} premises; you gave #{justify.arity()}."
 
 			assignment = new StringMap
 			# Add an empty assignment for each new atom of the rule.
@@ -89,7 +136,9 @@ checkJustified = (line) ->
 			patternMatch rule.conclusion(), lineContent, assignment
 
 			# We should have assigned to everything.
-			check rule.newAtoms().every (atom) -> (assignment.get atom.name())?
+			rule.newAtoms().forEach (atom) ->
+				check (assignment.get atom.name())?, ->
+					"Did not assign to #{atom.name()}"
 
 	, -> "Using #{justifier.name()}"
 

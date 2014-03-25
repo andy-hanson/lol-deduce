@@ -57,7 +57,7 @@ module.exports = (grunt) ->
 
 	(require 'load-grunt-tasks') grunt
 
-	grunt.registerTask 'all', [
+	grunt.registerTask 'default', [
 		'clean:pre',
 		'coffeelint',
 		'codo',

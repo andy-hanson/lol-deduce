@@ -1,9 +1,10 @@
+assert = require 'assert'
 ld = require '../js'
 
 describe 'Logic', ->
 	it 'works', ->
 		proof = '''
-		declare x y z ∨ ¬
+		declare x y z
 
 		repeat a: a ⇒
 			a
@@ -25,12 +26,34 @@ describe 'Logic', ->
 		zOrY: z ∨ y
 
 		ifX: x ⇒
-			a: ¬y	|xForbidsY ifX1
+			a: ¬y	|xForbidsY ifX#1
 			z		|onlyOption zOrY a
 
 		xImpliesZ: x → z	|repeat ifX
 		z					|xImpliesZ yesX
 
+		x ∧ (y ∧ z)
+
 		'''
 
 		ld.checkOrThrow proof
+
+
+	it 'asserts', ->
+		proof = '''
+		declare x
+		x
+		assert proven: x
+		'''
+
+		ld.checkOrThrow proof
+
+	it 'catches errors', ->
+		assert.throws ->
+			ld.checkOrThrow '''
+				tooManyNewAtoms a b: a ⇒
+					a
+			'''
+
+
+

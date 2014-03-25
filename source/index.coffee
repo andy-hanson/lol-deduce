@@ -1,3 +1,4 @@
+require 'es6-collections'
 (require 'source-map-support').install()
 
 { type } = require './help/✔'

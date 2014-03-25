@@ -1,6 +1,6 @@
 { type } = require './help/✔'
 Pos = require './Pos'
-{ throwInvalidProof } = require './InvalidProof'
+InvalidProof = require './InvalidProof'
 
 ###
 If `condition` is false, `cFail`s.
@@ -31,4 +31,4 @@ These _should_ be the user's fault.
 @cFail = (pos, message) ->
 	type pos, Pos, message, String
 
-	throwInvalidProof pos, message
+	InvalidProof.throw pos, message
